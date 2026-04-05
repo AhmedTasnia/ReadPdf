@@ -297,7 +297,7 @@ Raw extracted text:
             result = {"cleaned_text": raw, "confidence": 0.5, "issues_found": ["JSON parse error — raw output returned"]}
             CACHE[ck] = result
             return result
-        except anthropic.AuthenticationError:
+        except anthropic.APIError:
             raise
         except Exception as e:
             if attempt == 2:
@@ -361,7 +361,7 @@ Confidence guide:
             result = {"cleaned_text": raw, "confidence": 0.5, "issues_found": ["JSON parse error"]}
             CACHE[ck] = result
             return result
-        except anthropic.AuthenticationError:
+        except anthropic.APIError:
             raise
         except Exception as e:
             if attempt == 2:
@@ -604,6 +604,9 @@ if uploaded and api_key:
                 st.session_state["results"] = results
             except anthropic.AuthenticationError:
                 st.error("🔑 **Invalid Anthropic API Key!** Please check your API key in the sidebar and try again.")
+                st.stop()
+            except anthropic.APIError as e:
+                st.error(f"⚠️ **Anthropic API Error:** {e}")
                 st.stop()
             except Exception as e:
                 st.error(f"Pipeline error: {e}")
