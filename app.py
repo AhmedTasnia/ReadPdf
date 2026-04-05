@@ -133,11 +133,9 @@ with st.sidebar:
     chunk_size = st.slider("Max chunk size (chars)", 500, 4000, 2000, 100)
     overlap    = st.slider("Chunk overlap (chars)",   50,  500,  200,  25)
 
-    st.markdown("### 🖼️ Image Quality & Vision AI")
+    st.markdown("### 🖼️ Image Quality")
     dpi = st.selectbox("Rasterization DPI", [100, 150, 200, 300], index=2,
                        help="Higher DPI = better quality but slower & more tokens")
-    force_vision = st.checkbox("Force Vision AI (Best for handwritten/blurry)", value=False,
-                               help="Treats all pages as images to let Claude Vision read them. Ideal for blurry text or handwriting.")
 
     st.markdown("### 🎯 Confidence Thresholds")
     st.markdown("""
@@ -192,18 +190,12 @@ def combined_confidence(ai_score: float, text: str) -> float:
 
 # ─── STAGE 1: PAGE TRIAGE ────────────────────────────────────────────────────
 
-def classify_pages(pdf_path: str, force_vision: bool = False) -> dict:
+def classify_pages(pdf_path: str) -> dict:
     page_map = {}
     with pdfplumber.open(pdf_path) as pdf:
         for i, page in enumerate(pdf.pages):
-            if force_vision:
-                page_map[i] = "image"
-                continue
             text = page.extract_text() or ""
-            if len(text.strip()) >= 20 and heuristic_score(text) >= 0.4:
-                page_map[i] = "text"
-            else:
-                page_map[i] = "image"
+            page_map[i] = "text" if len(text.strip()) >= 20 else "image"
     return page_map
 
 # ─── STAGE 2: TEXT EXTRACTION + SPLITTING ────────────────────────────────────
@@ -370,7 +362,7 @@ Confidence guide:
 
 # ─── MAIN PIPELINE ───────────────────────────────────────────────────────────
 
-def run_pipeline(pdf_path: str, api_key: str, chunk_size: int, overlap: int, dpi: int, force_vision: bool):
+def run_pipeline(pdf_path: str, api_key: str, chunk_size: int, overlap: int, dpi: int):
     client = anthropic.Anthropic(api_key=api_key)
     results = []
 
@@ -378,7 +370,7 @@ def run_pipeline(pdf_path: str, api_key: str, chunk_size: int, overlap: int, dpi
     status = st.status("⚙️ Running pipeline...", expanded=True)
     with status:
         st.write("**Stage 1:** Triaging pages...")
-        page_map = classify_pages(pdf_path, force_vision=force_vision)
+        page_map = classify_pages(pdf_path)
         n_text  = sum(1 for v in page_map.values() if v == "text")
         n_image = sum(1 for v in page_map.values() if v == "image")
         st.write(f"→ {len(page_map)} pages found: **{n_text} text**, **{n_image} image/scan**")
@@ -600,10 +592,10 @@ if uploaded and api_key:
 
         if "results" not in st.session_state:
             try:
-                results = run_pipeline(tmp_path, api_key, chunk_size, overlap, dpi, force_vision)
+                results = run_pipeline(tmp_path, api_key, chunk_size, overlap, dpi)
                 st.session_state["results"] = results
             except anthropic.AuthenticationError:
-                st.error("🔑 **Invalid Anthropic API Key!** Please check your API key in the sidebar and try again.")
+                st.error("🔑 **Invalid Anthropic API Key!** Please check your key in the sidebar.")
                 st.stop()
             except anthropic.APIError as e:
                 st.error(f"⚠️ **Anthropic API Error:** {e}")
