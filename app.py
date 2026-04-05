@@ -1,5 +1,5 @@
 import streamlit as st
-import anthropic
+import google.generativeai as genai
 import pdfplumber
 import base64
 import json
@@ -122,10 +122,10 @@ with st.sidebar:
     st.markdown("## ⚙️ Configuration")
 
     api_key = st.text_input(
-        "Anthropic API Key",
+        "Google Gemini API Key (Free)",
         type="password",
-        placeholder="sk-ant-...",
-        help="Get your key at console.anthropic.com"
+        placeholder="AIzaSy...",
+        help="Get a free key at aistudio.google.com/app/apikey"
     ).strip()
 
     st.markdown("---")
@@ -238,7 +238,7 @@ def rasterize_pages(pdf_path: str, page_map: dict, dpi: int = 200) -> dict:
 
 # ─── STAGE 4: AI CLEANING ────────────────────────────────────────────────────
 
-def clean_text_chunk(client: anthropic.Anthropic, raw_chunk: str) -> dict:
+def clean_text_chunk(model, raw_chunk: str) -> dict:
     ck = cache_key(raw_chunk)
     if ck in CACHE:
         return CACHE[ck]
@@ -272,12 +272,8 @@ Raw extracted text:
 """
     for attempt in range(3):
         try:
-            response = client.messages.create(
-                model="claude-3-5-sonnet-20241022",
-                max_tokens=2000,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            raw = response.content[0].text.strip()
+            response = model.generate_content(prompt)
+            raw = response.text.strip()
             raw = re.sub(r'^```json\s*', '', raw)
             raw = re.sub(r'```$', '', raw).strip()
             result = json.loads(raw)
@@ -289,36 +285,24 @@ Raw extracted text:
             result = {"cleaned_text": raw, "confidence": 0.5, "issues_found": ["JSON parse error — raw output returned"]}
             CACHE[ck] = result
             return result
-        except anthropic.APIError:
-            raise
         except Exception as e:
+            if "api_key" in str(e).lower() or "unauthenticated" in str(e).lower() or "400" in str(e):
+                raise
             if attempt == 2:
                 return {"cleaned_text": raw_chunk, "confidence": 0.2, "issues_found": [f"API error: {str(e)}"]}
             time.sleep(2 ** attempt + random.uniform(0, 0.5))
 
-def transcribe_image_page(client: anthropic.Anthropic, image_path: str) -> dict:
+def transcribe_image_page(model, image_path: str) -> dict:
     ck = cache_key(image_path + str(os.path.getmtime(image_path)))
     if ck in CACHE:
         return CACHE[ck]
 
     with open(image_path, "rb") as f:
-        img_data = base64.standard_b64encode(f.read()).decode("utf-8")
+        img_data = f.read()
 
     for attempt in range(3):
         try:
-            response = client.messages.create(
-                model="claude-3-5-sonnet-20241022",
-                max_tokens=3000,
-                messages=[{
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {"type": "base64", "media_type": "image/jpeg", "data": img_data}
-                        },
-                        {
-                            "type": "text",
-                            "text": """This is a page from a scanned or photographed document that may be poor quality.
+            prompt = """This is a page from a scanned or photographed document that may be poor quality.
 Please transcribe ALL visible text accurately.
 - Preserve headings, paragraphs, and list structures
 - Render tables as plain text with | separators
@@ -337,11 +321,12 @@ Confidence guide:
 - 0.75 = mostly readable, minor issues
 - 0.50 = significant blur/noise but recoverable
 - 0.25 = severely degraded, partial recovery only"""
-                        }
-                    ]
-                }]
-            )
-            raw = response.content[0].text.strip()
+            
+            response = model.generate_content([
+                {"mime_type": "image/jpeg", "data": img_data},
+                prompt
+            ])
+            raw = response.text.strip()
             raw = re.sub(r'^```json\s*', '', raw)
             raw = re.sub(r'```$', '', raw).strip()
             result = json.loads(raw)
@@ -353,9 +338,9 @@ Confidence guide:
             result = {"cleaned_text": raw, "confidence": 0.5, "issues_found": ["JSON parse error"]}
             CACHE[ck] = result
             return result
-        except anthropic.APIError:
-            raise
         except Exception as e:
+            if "api_key" in str(e).lower() or "unauthenticated" in str(e).lower() or "400" in str(e):
+                raise
             if attempt == 2:
                 return {"cleaned_text": "", "confidence": 0.1, "issues_found": [f"Vision API error: {str(e)}"]}
             time.sleep(2 ** attempt + random.uniform(0, 0.5))
@@ -363,7 +348,8 @@ Confidence guide:
 # ─── MAIN PIPELINE ───────────────────────────────────────────────────────────
 
 def run_pipeline(pdf_path: str, api_key: str, chunk_size: int, overlap: int, dpi: int):
-    client = anthropic.Anthropic(api_key=api_key)
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel('gemini-1.5-flash', generation_config={"response_mime_type": "application/json"})
     results = []
 
     # ── Stage 1 ──────────────────────────────────────────────────────────────
@@ -399,7 +385,7 @@ def run_pipeline(pdf_path: str, api_key: str, chunk_size: int, overlap: int, dpi
         for page_num, raw_text in text_pages.items():
             chunks = split_text(raw_text, chunk_size, overlap)
             for ci, chunk in enumerate(chunks):
-                result = clean_text_chunk(client, chunk)
+                result = clean_text_chunk(model, chunk)
                 ai_conf = result.get("confidence", 0.5)
                 final_conf = combined_confidence(ai_conf, result.get("cleaned_text", ""))
                 results.append({
@@ -417,7 +403,7 @@ def run_pipeline(pdf_path: str, api_key: str, chunk_size: int, overlap: int, dpi
 
         # Image pages
         for page_num, img_path in image_pages.items():
-            result = transcribe_image_page(client, img_path)
+            result = transcribe_image_page(model, img_path)
             ai_conf = result.get("confidence", 0.6)
             final_conf = combined_confidence(ai_conf, result.get("cleaned_text", ""))
             results.append({
@@ -594,13 +580,11 @@ if uploaded and api_key:
             try:
                 results = run_pipeline(tmp_path, api_key, chunk_size, overlap, dpi)
                 st.session_state["results"] = results
-            except anthropic.AuthenticationError as e:
-                st.error(f"🔑 **Invalid Anthropic API Key!** Please check your key in the sidebar.\n\n*(Server response: {e})*")
-                st.stop()
-            except anthropic.APIError as e:
-                st.error(f"⚠️ **Anthropic API Error:** {e}")
-                st.stop()
             except Exception as e:
+                err_str = str(e).lower()
+                if "api_key" in err_str or "unauthenticated" in err_str or "400" in err_str:
+                    st.error(f"🔑 **Invalid Google API Key!** Please verify your key.\n\n*(Error: {e})*")
+                    st.stop()
                 st.error(f"Pipeline error: {e}")
                 st.stop()
 
