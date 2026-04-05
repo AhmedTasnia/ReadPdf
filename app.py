@@ -8,10 +8,9 @@ import os
 import time
 import random
 import hashlib
-import subprocess
-import glob
 import tempfile
 from pathlib import Path
+import fitz
 
 # ─── PAGE CONFIG ─────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -134,9 +133,11 @@ with st.sidebar:
     chunk_size = st.slider("Max chunk size (chars)", 500, 4000, 2000, 100)
     overlap    = st.slider("Chunk overlap (chars)",   50,  500,  200,  25)
 
-    st.markdown("### 🖼️ Image Quality")
+    st.markdown("### 🖼️ Image Quality & Vision AI")
     dpi = st.selectbox("Rasterization DPI", [100, 150, 200, 300], index=2,
                        help="Higher DPI = better quality but slower & more tokens")
+    force_vision = st.checkbox("Force Vision AI (Best for handwritten/blurry)", value=False,
+                               help="Treats all pages as images to let Claude Vision read them. Ideal for blurry text or handwriting.")
 
     st.markdown("### 🎯 Confidence Thresholds")
     st.markdown("""
@@ -191,12 +192,18 @@ def combined_confidence(ai_score: float, text: str) -> float:
 
 # ─── STAGE 1: PAGE TRIAGE ────────────────────────────────────────────────────
 
-def classify_pages(pdf_path: str) -> dict:
+def classify_pages(pdf_path: str, force_vision: bool = False) -> dict:
     page_map = {}
     with pdfplumber.open(pdf_path) as pdf:
         for i, page in enumerate(pdf.pages):
+            if force_vision:
+                page_map[i] = "image"
+                continue
             text = page.extract_text() or ""
-            page_map[i] = "text" if len(text.strip()) >= 20 else "image"
+            if len(text.strip()) >= 20 and heuristic_score(text) >= 0.4:
+                page_map[i] = "text"
+            else:
+                page_map[i] = "image"
     return page_map
 
 # ─── STAGE 2: TEXT EXTRACTION + SPLITTING ────────────────────────────────────
@@ -227,17 +234,14 @@ def split_text(text: str, max_chars: int = 2000, overlap: int = 200) -> list[str
 def rasterize_pages(pdf_path: str, page_map: dict, dpi: int = 200) -> dict:
     images = {}
     tmp_dir = tempfile.mkdtemp()
+    doc = fitz.open(pdf_path)
     for page_num, ptype in page_map.items():
         if ptype == "image":
-            p = page_num + 1
-            prefix = os.path.join(tmp_dir, f"page_{page_num}")
-            cmd = ["pdftoppm", "-jpeg", "-r", str(dpi),
-                   "-f", str(p), "-l", str(p), pdf_path, prefix]
-            result = subprocess.run(cmd, capture_output=True)
-            if result.returncode == 0:
-                matches = glob.glob(f"{prefix}*.jpg")
-                if matches:
-                    images[page_num] = matches[0]
+            page = doc.load_page(page_num)
+            pix = page.get_pixmap(dpi=dpi)
+            out_path = os.path.join(tmp_dir, f"page_{page_num}.jpg")
+            pix.save(out_path)
+            images[page_num] = out_path
     return images
 
 # ─── STAGE 4: AI CLEANING ────────────────────────────────────────────────────
@@ -277,7 +281,7 @@ Raw extracted text:
     for attempt in range(3):
         try:
             response = client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model="claude-3-5-sonnet-20241022",
                 max_tokens=2000,
                 messages=[{"role": "user", "content": prompt}]
             )
@@ -309,7 +313,7 @@ def transcribe_image_page(client: anthropic.Anthropic, image_path: str) -> dict:
     for attempt in range(3):
         try:
             response = client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model="claude-3-5-sonnet-20241022",
                 max_tokens=3000,
                 messages=[{
                     "role": "user",
@@ -362,7 +366,7 @@ Confidence guide:
 
 # ─── MAIN PIPELINE ───────────────────────────────────────────────────────────
 
-def run_pipeline(pdf_path: str, api_key: str, chunk_size: int, overlap: int, dpi: int):
+def run_pipeline(pdf_path: str, api_key: str, chunk_size: int, overlap: int, dpi: int, force_vision: bool):
     client = anthropic.Anthropic(api_key=api_key)
     results = []
 
@@ -370,7 +374,7 @@ def run_pipeline(pdf_path: str, api_key: str, chunk_size: int, overlap: int, dpi
     status = st.status("⚙️ Running pipeline...", expanded=True)
     with status:
         st.write("**Stage 1:** Triaging pages...")
-        page_map = classify_pages(pdf_path)
+        page_map = classify_pages(pdf_path, force_vision=force_vision)
         n_text  = sum(1 for v in page_map.values() if v == "text")
         n_image = sum(1 for v in page_map.values() if v == "image")
         st.write(f"→ {len(page_map)} pages found: **{n_text} text**, **{n_image} image/scan**")
@@ -592,7 +596,7 @@ if uploaded and api_key:
 
         if "results" not in st.session_state:
             try:
-                results = run_pipeline(tmp_path, api_key, chunk_size, overlap, dpi)
+                results = run_pipeline(tmp_path, api_key, chunk_size, overlap, dpi, force_vision)
                 st.session_state["results"] = results
             except Exception as e:
                 st.error(f"Pipeline error: {e}")
