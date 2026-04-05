@@ -289,7 +289,7 @@ Raw extracted text:
             if "api_key" in str(e).lower() or "unauthenticated" in str(e).lower() or "400" in str(e):
                 raise
             if attempt == 2:
-                return {"cleaned_text": raw_chunk, "confidence": 0.2, "issues_found": [f"API error: {str(e)}"]}
+                raise Exception(f"Text Processing Error: {str(e)}")
             time.sleep(2 ** attempt + random.uniform(0, 0.5))
 
 def transcribe_image_page(model, image_path: str) -> dict:
@@ -342,7 +342,7 @@ Confidence guide:
             if "api_key" in str(e).lower() or "unauthenticated" in str(e).lower() or "400" in str(e):
                 raise
             if attempt == 2:
-                return {"cleaned_text": "", "confidence": 0.1, "issues_found": [f"Vision API error: {str(e)}"]}
+                raise Exception(f"Vision Processing Error: {str(e)}")
             time.sleep(2 ** attempt + random.uniform(0, 0.5))
 
 # ─── MAIN PIPELINE ───────────────────────────────────────────────────────────
