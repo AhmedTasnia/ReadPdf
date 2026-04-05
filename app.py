@@ -297,6 +297,8 @@ Raw extracted text:
             result = {"cleaned_text": raw, "confidence": 0.5, "issues_found": ["JSON parse error — raw output returned"]}
             CACHE[ck] = result
             return result
+        except anthropic.AuthenticationError:
+            raise
         except Exception as e:
             if attempt == 2:
                 return {"cleaned_text": raw_chunk, "confidence": 0.2, "issues_found": [f"API error: {str(e)}"]}
@@ -359,6 +361,8 @@ Confidence guide:
             result = {"cleaned_text": raw, "confidence": 0.5, "issues_found": ["JSON parse error"]}
             CACHE[ck] = result
             return result
+        except anthropic.AuthenticationError:
+            raise
         except Exception as e:
             if attempt == 2:
                 return {"cleaned_text": "", "confidence": 0.1, "issues_found": [f"Vision API error: {str(e)}"]}
@@ -598,6 +602,9 @@ if uploaded and api_key:
             try:
                 results = run_pipeline(tmp_path, api_key, chunk_size, overlap, dpi, force_vision)
                 st.session_state["results"] = results
+            except anthropic.AuthenticationError:
+                st.error("🔑 **Invalid Anthropic API Key!** Please check your API key in the sidebar and try again.")
+                st.stop()
             except Exception as e:
                 st.error(f"Pipeline error: {e}")
                 st.stop()
