@@ -121,12 +121,12 @@ st.markdown("""
 with st.sidebar:
     st.markdown("## ⚙️ Configuration")
 
-    api_key = st.text_input(
-        "Anthropic API Key",
-        type="password",
-        placeholder="sk-ant-...",
-        help="Get your key at console.anthropic.com"
-    )
+    # Securely retrieve API key from Streamlit secrets or OS environment
+    # This keeps the key hidden from public end-users
+    if "ANTHROPIC_API_KEY" in st.secrets:
+        api_key = st.secrets["ANTHROPIC_API_KEY"]
+    else:
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
 
     st.markdown("---")
     st.markdown("### 📐 Text Splitting")
@@ -571,8 +571,8 @@ uploaded = st.file_uploader(
 if not api_key:
     st.markdown("""
     <div class="warn-box">
-    ⚠️ <b>API key required.</b> Enter your Anthropic API key in the sidebar to begin.
-    Get one free at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a>
+    ⚠️ <b>Application Misconfigured:</b> The administrator has not set the <code>ANTHROPIC_API_KEY</code> secret. 
+    If you are the owner, please add your Anthropic API Key to your Streamlit Cloud Workspace Secrets.
     </div>
     """, unsafe_allow_html=True)
 
