@@ -126,7 +126,7 @@ with st.sidebar:
         type="password",
         placeholder="sk-ant-...",
         help="Get your key at console.anthropic.com"
-    )
+    ).strip()
 
     st.markdown("---")
     st.markdown("### 📐 Text Splitting")
@@ -594,8 +594,8 @@ if uploaded and api_key:
             try:
                 results = run_pipeline(tmp_path, api_key, chunk_size, overlap, dpi)
                 st.session_state["results"] = results
-            except anthropic.AuthenticationError:
-                st.error("🔑 **Invalid Anthropic API Key!** Please check your key in the sidebar.")
+            except anthropic.AuthenticationError as e:
+                st.error(f"🔑 **Invalid Anthropic API Key!** Please check your key in the sidebar.\n\n*(Server response: {e})*")
                 st.stop()
             except anthropic.APIError as e:
                 st.error(f"⚠️ **Anthropic API Error:** {e}")
