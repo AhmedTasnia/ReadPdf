@@ -349,7 +349,7 @@ Confidence guide:
 
 def run_pipeline(pdf_path: str, api_key: str, chunk_size: int, overlap: int, dpi: int):
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash', generation_config={"response_mime_type": "application/json"})
+    model = genai.GenerativeModel('gemini-1.5-flash-latest', generation_config={"response_mime_type": "application/json"})
     results = []
 
     # ── Stage 1 ──────────────────────────────────────────────────────────────
